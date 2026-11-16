@@ -13,7 +13,6 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap">
 <style>
-  [hidden]{display:none!important}
 /* Layout: one-thumb column. Status up top, shot log in the middle, big lie pads pinned to the bottom. */
 :root{
   --bg:#F2F5F0; --surface:#FFFFFF; --ink:#14261D; --muted:#5A6A60; --line:#D3DCD4;
@@ -30,6 +29,7 @@
   --gain:#73AAFF; --loss:#FF7C6C; --warn:#F0B14A; color-scheme:dark;
 }}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--ink);font:16px/1.4 var(--body);-webkit-tap-highlight-color:transparent;
   padding:env(safe-area-inset-top,0) max(16px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0) max(16px,env(safe-area-inset-left,0px))}
@@ -146,6 +146,9 @@ const BASELINES=[['tour','PGA Tour',0],['0','Scratch',.10],['5','5 handicap',.19
 const bScale=k=>(BASELINES.find(b=>b[0]===k)||BASELINES[0])[2];
 const expStrokes=(lie,d,c)=>1+(tourExp(lie,d)-1)*(1+c);
 
+/* ---------- Built-in courses: [par, yards, green lat, green lon] per hole. Map data (c) OpenStreetMap contributors. ---------- */
+const COURSES={shannopin:{name:"Shannopin Country Club",holes:[[5,458,40.512986,-80.064245],[3,202,40.512605,-80.066771],[4,396,40.510767,-80.063443],[4,331,40.508879,-80.061273],[4,412,40.512364,-80.064282],[4,426,40.512838,-80.059967],[3,142,40.513502,-80.059658],[4,429,40.513582,-80.064292],[4,390,40.513937,-80.068207],[5,560,40.514349,-80.062513],[3,227,40.51612,-80.061275],[5,496,40.515446,-80.056075],[4,281,40.5171,-80.054626],[3,165,40.515953,-80.056147],[5,552,40.517382,-80.062043],[4,357,40.514699,-80.062926],[3,187,40.514846,-80.06471],[4,439,40.514666,-80.068242]]}};
+
 /* ---------- Storage ---------- */
 const KEY='sgcaddie.v1';
 let db={rounds:[],baseline:'tour'};
@@ -172,7 +175,8 @@ function gpsLabel(){
   const y=Math.round(fix.acc*1.0936);
   return fix.acc<=12?['ok','GPS ±'+y+' yd']:fix.acc<=35?['weak','GPS ±'+y+' yd']:['off','GPS weak ±'+y+' yd'];
 }
-function paintGps(){const el=document.getElementById('gps'); if(!el)return; const[g,t]=gpsLabel(); el.innerHTML='<span class="dot '+g+'"></span>'+t;}
+function paintGps(){const el=document.getElementById('gps'); if(!el)return; const[g,t]=gpsLabel(); el.innerHTML='<span class="dot '+g+'"></span>'+t;
+  const lv=document.getElementById('live'); if(lv){const r=round(),h=r&&r.holes[r.cur]; lv.textContent=h&&h.green&&usable(fix)?Math.round(yardsBetween(fix,h.green)):'—';}}
 setInterval(paintGps,5000);
 function yardsBetween(a,b){
   const R=6371000,r=Math.PI/180,dl=(b.lat-a.lat)*r,dn=(b.lon-a.lon)*r;
@@ -187,15 +191,17 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&ui.view==
 const LIES=['tee','fairway','rough','sand','recovery','green'];
 const LIE_NAME={tee:'Tee',fairway:'Fairway',rough:'Rough',sand:'Sand',recovery:'Recovery',green:'Green'};
 const CATS=[['ott','Off the tee'],['app','Approach'],['arg','Around green'],['putt','Putting']];
-function newRound(course,n){
+function newRound(course,n,start,ck){
   const r={id:Date.now().toString(36),date:new Date().toISOString(),course:course||'Round',cur:0,finished:false,
-    holes:Array.from({length:n},(_,i)=>({n:i+1,par:4,shots:[],pin:null,done:false}))};
+    holes:Array.from({length:n},(_,i)=>{const k=start+i,c=ck&&COURSES[ck].holes[k];
+      return c?{n:k+1,par:c[0],yds:c[1],green:{lat:c[2],lon:c[3]},shots:[],pin:null,done:false}:{n:k+1,par:4,shots:[],pin:null,done:false};})};
   db.rounds.unshift(r);save();return r;
 }
 function effDist(h,s){
   if(s.dist!=null)return s.dist;
   if(s.lie==='green')return null;
-  if(s.pos&&h.pin)return Math.max(1,yardsBetween(s.pos,h.pin));
+  const t=h.pin||h.green;
+  if(s.pos&&t)return Math.max(1,yardsBetween(s.pos,t));
   return null;
 }
 function holeCalc(h,c){
@@ -268,11 +274,11 @@ function vHome(){
       '<button class="btn ghost danger small" data-act="del" data-id="'+r.id+'" aria-label="Delete round">'+(del?'Confirm':'✕')+'</button></div>';
   }).join('');
   return '<header><h1>Strokes Gained Caddie</h1><p class="muted" style="margin:2px 0 0">Tap your lie at each ball. Distances and strokes gained work themselves out.</p></header>'+
-  '<section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>New round</h2><input id="course" type="text" placeholder="Course name" autocomplete="off">'+
-  '<div class="row"><div class="seg" id="nholes"><button data-act="nh" data-n="18" aria-pressed="true">18 holes</button><button data-act="nh" data-n="9" aria-pressed="false">9 holes</button></div><button class="btn primary grow" data-act="start">Tee off</button></div></section>'+
+  '<section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>New round</h2><select id="coursesel" aria-label="Course">'+Object.keys(COURSES).map(k=>'<option value="'+k+'">'+COURSES[k].name+'</option>').join('')+'<option value="">Another course</option></select><input id="course" type="text" placeholder="Course name" autocomplete="off" hidden>'+
+  '<div class="row"><div class="seg" id="nholes"><button data-act="nh" data-n="18" data-s="0" aria-pressed="true">18</button><button data-act="nh" data-n="9" data-s="0" aria-pressed="false">Front 9</button><button data-act="nh" data-n="9" data-s="9" aria-pressed="false">Back 9</button></div><button class="btn primary grow" data-act="start">Tee off</button></div></section>'+
   avg+
   (list?'<section class="list"><div class="label">Rounds</div>'+list+'</section>':'<p class="muted small">No rounds yet. Want to see what the stats look like first? <button data-act="sample" style="text-decoration:underline">Load a sample round</button></p>')+
-  '<div class="spacer"></div><div class="row"><button class="btn grow small" data-act="export">Back up rounds</button><label class="btn grow small" style="text-align:center;display:flex;align-items:center;justify-content:center">Restore backup<input id="import" type="file" accept="application/json,.json" hidden></label></div>';
+  '<div class="spacer"></div><div class="row"><button class="btn grow small" data-act="export">Back up rounds</button><label class="btn grow small" style="text-align:center;display:flex;align-items:center;justify-content:center">Restore backup<input id="import" type="file" accept="application/json,.json" hidden></label></div><p class="muted small" style="margin:0;text-align:center">Course map data © OpenStreetMap contributors</p>';
 }
 function bars(m){
   const mx=Math.max(1,...Object.values(m).map(Math.abs));
@@ -297,6 +303,7 @@ function vPlay(){
   '<div class="seg" role="group" aria-label="Par">'+[3,4,5].map(p=>'<button data-act="par" data-p="'+p+'" aria-pressed="'+(h.par===p)+'">'+p+'</button>').join('')+'</div>'+
   '<button class="nav" data-act="next" aria-label="Next hole"'+(r.cur===r.holes.length-1?' disabled':'')+'>›</button></div>'+
   '<div class="row between small muted"><span>Par '+h.par+' · '+(h.shots.length?k.score+' stroke'+(k.score>1?'s':''):'not started')+'</span><span>Round: '+(tot.played?tot.score+' ('+toPar(tot.score-tot.par)+') thru '+tot.played:'—')+'</span></div>';
+  if(h.green&&!h.done)s+='<div class="card row between"><div><div class="label">To middle of green</div><div class="num" style="font-size:56px;font-weight:700;line-height:1"><span id="live">—</span> <span class="muted" style="font-size:20px">yds</span></div></div><div class="muted small" style="text-align:right">Hole length<br><span class="num" style="font-size:20px">'+h.yds+' yds</span></div></div>';
   s+='<div class="log">'+h.shots.map((_,i)=>shotRow(h,k,i,true)).join('')+'</div>';
   if(h.done){
     const d=k.score-h.par,name=k.score===1?'Hole in one':d<=-2?'Eagle':d===-1?'Birdie':d===0?'Par':d===1?'Bogey':d===2?'Double bogey':'+'+d;
@@ -352,7 +359,7 @@ function closeSheet(){ui.sheet=null;sheetEl.hidden=true;sheetEl.innerHTML='';}
 function paintSheet(first){
   const st=ui.sheet,h=round().holes[round().cur],s=h.shots[st.i];
   const keep=first?(s.dist!=null?s.dist:''):document.getElementById('ed-dist').value;
-  const g=st.lie==='green',auto=!g&&s.pos&&h.pin?Math.round(yardsBetween(s.pos,h.pin)):null;
+  const g=st.lie==='green',tg=h.pin||h.green,auto=!g&&s.pos&&tg?Math.round(yardsBetween(s.pos,tg)):null;
   sheetEl.innerHTML='<div class="panel" role="dialog" aria-label="Edit shot"><div class="row between"><h2>Shot '+(st.i+1)+'</h2><button class="btn ghost small" data-act="s-close" style="min-height:36px;padding:6px 10px">Close</button></div>'+
    '<div class="lies">'+LIES.map(l=>'<button data-act="s-lie" data-lie="'+l+'" aria-pressed="'+(st.lie===l)+'">'+LIE_NAME[l]+'</button>').join('')+'</div>'+
    '<label class="small muted" for="ed-dist">Distance to the hole ('+(g?'feet':'yards')+')'+(auto!=null?' · leave blank to use GPS':'')+'</label>'+
@@ -377,7 +384,8 @@ function addShot(h,lie,dist){
 }
 const actions={
   nh(el){document.querySelectorAll('#nholes button').forEach(b=>b.setAttribute('aria-pressed',b===el));},
-  start(){const n=+document.querySelector('#nholes [aria-pressed=true]').dataset.n;const r=newRound(document.getElementById('course').value.trim(),n);ui.rid=r.id;go('play');},
+  start(){const b=document.querySelector('#nholes [aria-pressed=true]').dataset,ck=document.getElementById('coursesel').value;
+    const r=newRound(ck?COURSES[ck].name:document.getElementById('course').value.trim(),+b.n,+b.s,ck);ui.rid=r.id;go('play');},
   open(el){ui.rid=el.dataset.id;go(round().finished?'summary':'play');},
   del(el){const id=el.dataset.id;if(ui.confirmDel===id){db.rounds=db.rounds.filter(r=>r.id!==id);ui.confirmDel=null;save();}else ui.confirmDel=id;render();},
   home(){go('home');},
@@ -418,6 +426,7 @@ document.addEventListener('click',e=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.id==='baseline'){db.baseline=e.target.value;save();render();}
+  if(e.target.id==='coursesel')document.getElementById('course').hidden=!!e.target.value;
   if(e.target.id==='import')importData(e.target.files[0]);
 });
 function exportData(){
@@ -439,7 +448,7 @@ function loadSample(){
    [4,[['tee',355],['fairway',102],['green',31],['green',4]]],[3,[['tee',148],['green',19],['green',2]]],
    [4,[['tee',431],['rough',187],['fairway',42],['green',11],['green',2]]],[5,[['tee',502],['fairway',241],['rough',23],['green',7]]],
    [4,[['tee',378],['recovery',170],['fairway',64],['green',16],['green',3]]]];
-  const r=newRound('Sample round',9);r.finished=true;
+  const r=newRound('Sample round',9,0,'');r.finished=true;
   H.forEach((x,i)=>{r.holes[i].par=x[0];r.holes[i].done=true;r.holes[i].shots=x[1].map(s=>({lie:s[0],dist:s[1],pos:null,pen:s[2]||0}));});
   save();ui.rid=r.id;go('summary');
 }
